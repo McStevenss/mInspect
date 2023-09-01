@@ -56,8 +56,12 @@ class mInspect(Tk):
         self.loadModelButton = Button(self.tabs['Main'],text="Load Model", command=self.load_model)
         self.loadModelButton.grid(column=0, row=0, sticky='w')  # Align to the left
 
-        self.extract_layer_button = Button(self.tabs['Main'],text="Extract Model",state='disabled',command=self.extract_model)
+        self.extract_layer_button = Button(self.tabs['Main'],text="Extract Base-layer",state='disabled',command=self.extract_base_layer)
         self.extract_layer_button.grid(column=1, row=0, sticky='w')  # Align to the left
+        self.config(menu=self.menu_bar)
+
+        self.extract_feature_button = Button(self.tabs['Main'],text="Extract Feature-map",state='disabled',command=self.extract_feature_map)
+        self.extract_feature_button.grid(column=2, row=0, sticky='w')  # Align to the left
         self.config(menu=self.menu_bar)
 
     def on_closing(self):
@@ -92,7 +96,9 @@ class mInspect(Tk):
         self.loadModelButton.config(text="Model Loaded")
         self.extract_layer_button.config(state='normal')
 
-    def extract_model(self):
+        self.extract_feature_button.config(state='normal')
+
+    def extract_base_layer(self):
         # summarize filter shapes
         print("--------Relevant Model layers--------")
 
@@ -113,14 +119,11 @@ class mInspect(Tk):
             #self.processed_filters.append(filters)
 
         print("-------------------------------------")
-        
-        # Adjust the spacing between subplots
-        # plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, wspace=0.1, hspace=0.1)
-        
+
         layer,filter,bias = self.layers[0]
         n_filters = filter.shape[3]
         print("n_filters", n_filters)
-        # fig, axs = plt.subplots(n_filters, 3, figsize=(10,10))
+        print("Extracting baselayer")
         fig, axs = plt.subplots(n_filters, 3, figsize=(10, 10))  # Create the combined figure
         tmp_image = np.zeros((filter.shape[0], filter.shape[1], 3), dtype=np.float32)
         #Skip input layer
@@ -129,7 +132,6 @@ class mInspect(Tk):
             # get the filter
             f = filter[:, :, :, i]
             tmp_image.fill(0)  # Reset the temporary image to black for each filter
-
             # plot each channel separately
             for j in range(3):
 
@@ -169,7 +171,15 @@ class mInspect(Tk):
 
         return None
         
+    def extract_feature_map(self):
 
+        for i in range(len(self.model.layers)):
+            layer = self.model.layers[i]
+            # check for convolutional layer
+            if 'conv' not in layer.name:
+                continue
+            # summarize output shape
+            print(i, layer.name, layer.output.shape)
 
 if __name__ == "__main__":
     minspect = mInspect()
