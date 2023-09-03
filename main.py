@@ -8,7 +8,14 @@ from PIL import Image, ImageTk  # Import Image and ImageTk from Pillow
 import numpy as np
 from scrollable_image import ScrollableImage
 import os
-import io
+
+from keras.applications.vgg16 import preprocess_input
+#from keras.preprocessing.image import load_img
+from keras.utils import load_img
+from keras.utils import img_to_array
+#from keras.preprocessing.image import img_to_array
+from keras.models import Model
+
 
 class mInspect(Tk):
     def __init__(self):
@@ -23,7 +30,7 @@ class mInspect(Tk):
         self.tab_control = ttk.Notebook(self)
         self.loadModelButton = None
         self.extract_layer_button = None
-
+        self.tab_images = []
 
         #Style
         self.style = ttk.Style()
@@ -42,6 +49,7 @@ class mInspect(Tk):
 
         #Program
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.file = None
         #Window setup
         self.title(self.window_title)
         self.geometry(self.dimension)
@@ -78,6 +86,20 @@ class mInspect(Tk):
         else:
             print("No workspace chosen")
 
+    def openFileDialog(self):
+        filetypes = (
+        ("JPEG", "*.jpg"),
+        ("PNG", "*.png")
+        )
+
+        file = filedialog.askopenfile(filetypes=filetypes)
+        if file != "":
+            print(f"File chosen: {file}")
+            return file.name
+        else:
+            print("No file chosen")
+            return None
+
     def add_tab(self, tab_name):
         self.tabs[tab_name] = ttk.Frame(self.tab_control)
 
@@ -98,18 +120,44 @@ class mInspect(Tk):
 
         self.extract_feature_button.config(state='normal')
 
+    def show_img_in_tab(self, img_path, tab_name):
+
+        self.add_tab(f"{tab_name}")
+        
+        #self.base_filter_image = Image.open(img_path)
+        tab_img = Image.open(img_path)
+        self.tab_images.append(ImageTk.PhotoImage(tab_img))
+
+        canvas = Canvas(self.tabs[tab_name])
+        canvas.pack(side=LEFT,fill=BOTH,expand=1)
+
+        image_label = Label(self.tabs[tab_name], image=self.tab_images[-1])
+        image_label.pack()#grid(row=0, column=1)  # Use grid instead of pack
+        
+        scrollbar = ttk.Scrollbar(self.tabs[tab_name], orient=VERTICAL, command=canvas.yview)
+        scrollbar.pack(side=RIGHT,fill=Y)#grid(row=0, column=0, sticky='ns')  # Use sticky to make the scrollbar fill vertically
+
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.create_window((0, 0), window=image_label, anchor=NW)
+        canvas.update_idletasks()  # Update the canvas
+
+        canvas.config(scrollregion=canvas.bbox(ALL))
+
+        return
+
     def extract_base_layer(self):
         # summarize filter shapes
         print("--------Relevant Model layers--------")
 
-        for layer in self.model.layers:
+        for idx, layer in enumerate(self.model.layers):
             # check for convolutional layer
             if 'conv' not in layer.name:
                 continue
 
             # get filter weights
             filters, biases = layer.get_weights()
-            print(layer.name, filters.shape)
+            print(idx, layer.name, filters.shape)
 
             #save processed filters
             f_min, f_max = filters.min(), filters.max()
@@ -146,40 +194,57 @@ class mInspect(Tk):
 
         fig.subplots_adjust(left=0, right=1, bottom=0, top=1, wspace=0, hspace=0)
         #Process image
-        self.add_tab("BaseLayerFilters")
         fig.savefig(f"{layer.name}.png")
         plt.close(fig)
 
-        self.base_filter_image = Image.open(f"{layer.name}.png")
-        self.base_filter_image = ImageTk.PhotoImage(self.base_filter_image)
-
-        canvas = Canvas(self.tabs['BaseLayerFilters'])
-        canvas.pack(side=LEFT,fill=BOTH,expand=1)
-
-        image_label = Label(self.tabs['BaseLayerFilters'], image=self.base_filter_image)
-        image_label.pack()#grid(row=0, column=1)  # Use grid instead of pack
-        
-        scrollbar = ttk.Scrollbar(self.tabs['BaseLayerFilters'], orient=VERTICAL, command=canvas.yview)
-        scrollbar.pack(side=RIGHT,fill=Y)#grid(row=0, column=0, sticky='ns')  # Use sticky to make the scrollbar fill vertically
-
-        canvas.configure(yscrollcommand=scrollbar.set)
-
-        canvas.create_window((0, 0), window=image_label, anchor=NW)
-        canvas.update_idletasks()  # Update the canvas
-
-        canvas.config(scrollregion=canvas.bbox(ALL))
-
+        self.show_img_in_tab(f"{layer.name}.png","BaseLayerFilters")
+       
         return None
         
     def extract_feature_map(self):
 
-        for i in range(len(self.model.layers)):
-            layer = self.model.layers[i]
-            # check for convolutional layer
-            if 'conv' not in layer.name:
-                continue
-            # summarize output shape
-            print(i, layer.name, layer.output.shape)
+        #Get image file:
+        file = self.openFileDialog()
+        if file == None:
+            print("Need a image to extract")
+            return
+
+        ixs = [2, 5, 9, 13, 17]
+        outputs = [self.model.layers[i].output for i in ixs]
+        model = Model(inputs=self.model.inputs, outputs=outputs)
+        img = load_img(file, target_size=(224, 224))
+
+        # convert the image to an array
+        img = img_to_array(img)
+        # expand dimensions so that it represents a single 'sample'
+        img = np.expand_dims(img, axis=0)
+
+        # prepare the image (e.g. scale pixel values for the vgg)
+        img = preprocess_input(img)
+
+        # get feature map for first hidden layer
+        feature_maps = model.predict(img)
+
+        feature_map_files = []
+        square = 8
+        for idx, fmap in enumerate(feature_maps):
+            # plot all 64 maps in an 8x8 squares
+            ix = 1
+            for _ in range(square):
+                for _ in range(square):
+                    # specify subplot and turn of axis
+                    ax = plt.subplot(square, square, ix)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    # plot filter channel in grayscale
+                    plt.imshow(fmap[0, :, :, ix-1], cmap='gray')
+                    ix += 1
+            feature_map_files.append(f"fmap-{idx}.png")
+            plt.savefig(f"fmap-{idx}.png")
+            plt.close()
+        # show the figure
+        for fmap in feature_map_files:
+            self.show_img_in_tab(fmap,fmap)
 
 if __name__ == "__main__":
     minspect = mInspect()
